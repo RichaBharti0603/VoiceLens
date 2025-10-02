@@ -10,8 +10,8 @@ export default function Upload() {
     if (!file) return alert("Select a file first!");
     setLoading(true);
 
-  const formData = new FormData();
-  formData.append("file", file);
+    const formData = new FormData();
+    formData.append("file", file);
 
     try {
       const res = await axios.post("http://localhost:5000/api/ocr", formData, {
