@@ -1,138 +1,143 @@
-
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 
-// Full Murf voices list (truncated for brevity, add all as needed)
-const voices = [
-  { name: "Hazel (F, UK)", id: "en-UK-hazel" },
-  { name: "Cooper (M, US)", id: "en-US-cooper" },
-  { name: "Imani (F, US)", id: "en-US-imani" },
-  { name: "Aarav (M, IN)", id: "en-IN-aarav" },
-  { name: "Priya (F, IN)", id: "en-IN-priya" },
-  { name: "Rohan (M, IN)", id: "en-IN-rohan" },
-  { name: "Alia (F, IN)", id: "en-IN-alia" },
-  { name: "Isha (F, IN)", id: "en-IN-isha" },
-  { name: "Wayne (M, US)", id: "en-US-wayne" },
-  { name: "Daniel (M, US)", id: "en-US-daniel" },
-  { name: "Juliet (F, UK)", id: "en-UK-juliet" },
-  { name: "Gabriel (M, UK)", id: "en-UK-gabriel" },
-  { name: "Amber (F, UK)", id: "en-UK-amber" },
-  { name: "Ruby (F, UK)", id: "en-UK-ruby" },
-  { name: "Theo (M, UK)", id: "en-UK-theo" },
-  { name: "Katie (F, UK)", id: "en-UK-katie" },
-  { name: "Jaxon (M, UK)", id: "en-UK-jaxon" },
-  { name: "Pearl (F, UK)", id: "en-UK-pearl" },
-  { name: "Mason (M, UK)", id: "en-UK-mason" },
-  { name: "Finley (M, UK)", id: "en-UK-finley" },
-  { name: "Harrison (M, UK)", id: "en-UK-harrison" },
-  { name: "Heidi (F, UK)", id: "en-UK-heidi" },
-  // ...add more voices as needed from the Murf list
-];
-
-export default function Upload() {
-  const [file, setFile] = useState(null);
-  const [messages, setMessages] = useState([]); // chat-style history
+const Upload = () => {
+  const [text, setText] = useState("");
+  const [voices, setVoices] = useState([]);
+  const [selectedVoice, setSelectedVoice] = useState("");
+  const [audioUrl, setAudioUrl] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [voice, setVoice] = useState("en-UK-hazel");
+
+  // Fetch voices dynamically from backend
+  useEffect(() => {
+    const fetchVoices = async () => {
+      try {
+        const res = await axios.get("http://localhost:5000/api/voices");
+        // Enhance with display names
+        const enhancedVoices = res.data.map(v => ({
+          voiceId: v.voiceId,
+          displayName: v.voiceId.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          locale: v.voiceId.split('-')[1] || "en"
+        }));
+        setVoices(enhancedVoices);
+        setSelectedVoice(enhancedVoices[0]?.voiceId || "");
+      } catch (error) {
+        console.error("Error fetching voices:", error);
+        // Static fallback
+        const staticVoices = [
+          { voiceId: "en-UK-hazel", displayName: "Hazel (F)", locale: "en-UK" },
+          { voiceId: "en-IN-priya", displayName: "Priya (F)", locale: "en-IN" }
+        ];
+        setVoices(staticVoices);
+        setSelectedVoice(staticVoices[0].voiceId);
+        setError("Using static voices (backend fetch failed).");
+      }
+    };
+    fetchVoices();
+  }, []);
+
+  // Cleanup audio URL
+  useEffect(() => {
+    return () => {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+    };
+  }, [audioUrl]);
 
   const handleUpload = async () => {
-    if (!file) return alert("Select a file first!");
-    setLoading(true);
+    if (!text.trim()) {
+      setError("Please enter some text.");
+      return;
+    }
 
-    const formData = new FormData();
-    formData.append("file", file);
+    setLoading(true);
+    setError("");
+    setAudioUrl("");
 
     try {
-      // OCR
-      const ocrRes = await axios.post("http://localhost:5000/api/ocr", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      const text = ocrRes.data.text;
+      console.log("Sending text to backend:", { text, voice: selectedVoice });
 
-      // TTS
-      const ttsRes = await axios.post(
-        "http://localhost:5000/api/tts",
-        { text, voice },
-        { responseType: "blob" }
-      );
-      const audioURL = URL.createObjectURL(ttsRes.data);
+      const response = await axios.post("http://localhost:5000/api/tts", {
+        text,
+        voice: selectedVoice
+      }, { responseType: "blob" });
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          file,
-          text,
-          audioURL,
-          voice,
-        },
-      ]);
-      setFile(null);
-    } catch (err) {
-      console.error("Upload error:", err);
-      alert("OCR or TTS failed. Check backend logs.");
+      const audioBlob = new Blob([response.data], { type: "audio/mpeg" });
+      const url = URL.createObjectURL(audioBlob);
+      setAudioUrl(url);
+
+      const audio = new Audio(url);
+      audio.play().catch(e => console.warn("Auto-play failed:", e));
+
+      console.log("✅ Audio generated successfully");
+    } catch (error) {
+      console.error("Upload error:", error);
+      const errorMsg = error.response?.data?.error || error.message || "Failed to generate audio.";
+      setError(errorMsg);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ padding: 20, maxWidth: 600, margin: "auto" }}>
-      <h2 style={{ textAlign: "center" }}>VoiceLens - OCR Chat</h2>
-
-      {/* Upload Section */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-        <input
-          type="file"
-          onChange={(e) => setFile(e.target.files[0])}
-        />
-        <select value={voice} onChange={(e) => setVoice(e.target.value)}>
-          {voices.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.name}
-            </option>
-          ))}
+    <div style={{ padding: "20px", maxWidth: "500px", margin: "0 auto" }}>
+      <h2>Text-to-Speech Upload</h2>
+      <textarea
+        placeholder="Enter text here..."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={5}
+        style={{ width: "100%", padding: "10px", borderRadius: "5px", marginBottom: "10px" }}
+      />
+      <div style={{ marginBottom: "10px" }}>
+        <label htmlFor="voices">Select Voice: </label>
+        <select
+          id="voices"
+          value={selectedVoice}
+          onChange={(e) => setSelectedVoice(e.target.value)}
+          disabled={loading}
+          style={{ padding: "8px", borderRadius: "5px" }}
+        >
+          {voices.length > 0 ? (
+            voices.map((v) => (
+              <option key={v.voiceId} value={v.voiceId}>
+                {v.displayName} ({v.locale})
+              </option>
+            ))
+          ) : (
+            <option value="">Loading voices...</option>
+          )}
         </select>
-        <button onClick={handleUpload} disabled={loading}>
-          {loading ? "Processing..." : "Upload & Convert"}
-        </button>
       </div>
+      <button
+        onClick={handleUpload}
+        disabled={loading || !text.trim()}
+        style={{ 
+          padding: "10px 20px", 
+          borderRadius: "5px", 
+          cursor: loading ? "not-allowed" : "pointer",
+          backgroundColor: loading ? "#ccc" : "#007bff",
+          color: "white",
+          border: "none"
+        }}
+      >
+        {loading ? "Generating..." : "Convert to Speech"}
+      </button>
 
-      {/* Chat-style messages */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 15, maxHeight: 400, overflowY: "auto" }}>
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start",
-              borderRadius: 10,
-              padding: 10,
-              backgroundColor: "#f0f0f0",
-              boxShadow: "0 2px 8px #0001",
-            }}
-          >
-            <strong>Image:</strong>
-            <img
-              src={URL.createObjectURL(msg.file)}
-              alt="uploaded"
-              style={{ width: "100%", maxHeight: 200, objectFit: "contain", margin: "10px 0" }}
-            />
-            <strong>Extracted Text:</strong>
-            <p style={{ backgroundColor: "#fff", padding: 8, borderRadius: 5 }}>{msg.text || "No text detected"}</p>
-            <strong>Voice: {voices.find((v) => v.id === msg.voice)?.name || msg.voice}</strong>
-            <audio controls src={msg.audioURL} style={{ marginTop: 10 }} />
-            <a
-              href={msg.audioURL}
-              download={`audio-${msg.id}.mp3`}
-              style={{ marginTop: 5, color: "blue", textDecoration: "underline" }}
-            >
-              Download Audio
-            </a>
-          </div>
-        ))}
-      </div>
+      {error && (
+        <div style={{ marginTop: "10px", color: "red", fontSize: "14px" }}>
+          Error: {error}
+        </div>
+      )}
+
+      {audioUrl && (
+        <div style={{ marginTop: "20px" }}>
+          <h4>Generated Audio:</h4>
+          <audio controls src={audioUrl} />
+        </div>
+      )}
     </div>
   );
-}
+};
+
+export default Upload;

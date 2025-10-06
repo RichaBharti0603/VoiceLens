@@ -1,137 +1,138 @@
 import express from "express";
-import multer from "multer";
-import { createWorker } from "tesseract.js";
-import path from "path";
-import fs from "fs";
 import cors from "cors";
-import axios from "axios";
-import { fileURLToPath } from "url";
-import { dirname } from "path";
 import dotenv from "dotenv";
+import axios from "axios";
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
 const app = express();
-const PORT = process.env.PORT || 5000;
-const MURF_API_KEY = process.env.MURF_API_KEY;
-
-// Exit if API key is missing
-if (!MURF_API_KEY) {
-  console.error("❌ Murf API key missing in .env");
-  process.exit(1);
-}
-
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Multer setup
-const uploadDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+const MURF_API_KEY = process.env.MURF_API_KEY;
+const MURF_ENDPOINT = process.env.MURF_ENDPOINT || "https://api.murf.ai/v1/tts"; // Override in .env for easy testing
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
-});
-const upload = multer({ storage });
+// Supported voices - Confirm from hackathon docs
+const validVoices = ["en-UK-hazel", "en-IN-priya"];
 
-// ------------------ Temporary Endpoint: List Murf Voices ------------------
-app.get("/api/murf-voices", async (req, res) => {
-  try {
-    const response = await axios.get("https://api.murf.ai/v1/speech/voices", {
-      headers: {
-        "api-key": MURF_API_KEY,
-      },
-    });
-    console.log("Available Murf voices:", response.data);
-    res.json(response.data);
-  } catch (error) {
-    let errorMsg = error.message;
-    if (error.response && error.response.data) {
-      errorMsg = error.response.data;
-    }
-    console.error("Error fetching Murf voices:", errorMsg);
-    res.status(500).json({ error: errorMsg });
-  }
-});
-
-// ------------------ OCR Endpoint ------------------
-app.post("/api/ocr", upload.single("file"), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-
-    const worker = await createWorker();
-    const { data } = await worker.recognize(req.file.path);
-    await worker.terminate();
-
-    res.json({ text: data.text });
-  } catch (err) {
-    console.error("OCR error:", err);
-    res.status(500).json({ error: err.message || "OCR failed" });
-  } finally {
-    if (req.file?.path) fs.unlink(req.file.path, () => {});
-  }
-});
-
-// ------------------ TTS Endpoint ------------------
+// Optional: Add project_id support if Murf requires it (pass from frontend if needed)
 app.post("/api/tts", async (req, res) => {
+  const { text, voice, project_id } = req.body; // Added project_id for potential Murf requirement
+
+  if (!text || !text.trim()) {
+    return res.status(400).json({ error: "Text is required for TTS." });
+  }
+
+  if (!MURF_API_KEY) {
+    console.error("❌ MURF_API_KEY is not configured in .env.");
+    return res.status(500).json({ error: "MURF_API_KEY not configured." });
+  }
+
+  const voiceId = validVoices.includes(voice) ? voice : validVoices[0];
+
+  console.log("Incoming TTS Request:", { text, voice: voiceId, project_id });
+
+  const payload = {
+    text: text,  // Or 'input' - swap if docs specify
+    voice_id: voiceId,  // Or 'voice'
+    output_format: "mp3",  // Or 'format'
+    sample_rate: 44100,
+    speaking_rate: 1,
+    pitch: 0
+  };
+
+  // Add project_id if provided (common for Murf projects)
+  if (project_id) {
+    payload.project_id = project_id;
+  }
+
+  console.log("Using endpoint:", MURF_ENDPOINT);
+  console.log("Payload sent:", payload);
+
+  // Endpoint Variations - If 404, update MURF_ENDPOINT in .env or uncomment below and restart
+  // Examples to try (one at a time):
+  // const MURF_ENDPOINT = "https://api.murf.ai/v1/synthesis";
+  // const MURF_ENDPOINT = "https://api.murf.ai/v1/generate";
+  // const MURF_ENDPOINT = "https://api.murf.ai/v1/audio";
+  // const MURF_ENDPOINT = "https://api.murf.ai/v1/speech";
+  // const MURF_ENDPOINT = "https://api.murf.ai/v1/voice/synthesize";
+  // const MURF_ENDPOINT = "https://api.murf.ai/v1/projects/synthesize"; // If project-based
+  // const MURF_ENDPOINT = "https://hackathon.murf.ai/v1/tts"; // If custom hackathon URL
+
   try {
-
-    let { text, voice } = req.body;
-    console.log("Incoming req.body for TTS:", req.body);
-    if (!text) return res.status(400).json({ error: "Text missing" });
-    // Ensure voice is never null, undefined, or empty string
-    if (!voice || typeof voice !== "string" || !voice.trim()) {
-      voice = "en-UK-hazel";
-      console.warn("No or invalid voice provided, using default:", voice);
-    }
-
-    const murfPayload = {
-      input: text,
-      voice_id: voice, // Murf expects 'voice_id' not 'voice'
-      output_format: "mp3",
-    };
-    console.log("Payload sent to Murf:", murfPayload);
-    console.log("Murf API key (first 6 chars):", MURF_API_KEY.slice(0, 6));
-
-    const response = await axios({
-      method: "post",
-      url: "https://api.murf.ai/v1/speech/generate",
-      headers: {
-        "api-key": MURF_API_KEY,
-        "Content-Type": "application/json",
-      },
-      data: murfPayload,
-      responseType: "arraybuffer", // required for audio binary
-    });
-
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.send(Buffer.from(response.data, "binary"));
-  } catch (err) {
-    console.error("TTS error details:", err.response?.data || err.message);
-
-    // If response is buffer, decode and parse
-    if (err.response?.data instanceof Buffer) {
-      const decoded = err.response.data.toString("utf-8");
-      console.error("Decoded Murf error:", decoded);
-      try {
-        const parsed = JSON.parse(decoded);
-        return res.status(err.response.status || 500).json(parsed);
-      } catch {
-        return res.status(500).json({ error: "TTS failed (invalid response)" });
+    const response = await axios.post(
+      MURF_ENDPOINT,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${MURF_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        responseType: "arraybuffer",
+        timeout: 30000
       }
+    );
+
+    console.log("✅ Murf TTS audio received successfully");
+
+    res.set({
+      "Content-Type": "audio/mpeg",
+      "Content-Length": response.data.length
+    });
+    res.send(response.data);
+  } catch (error) {
+    let errorData = error.response?.data;
+    let status = error.response?.status || 500;
+    let message = "Failed to generate TTS audio.";
+
+    if (Buffer.isBuffer(errorData)) {
+      try {
+        const decoded = errorData.toString("utf8");
+        errorData = JSON.parse(decoded);
+        console.error("❌ TTS error (decoded):", errorData);
+        message = errorData?.errorMessage || errorData?.error || errorData?.message || message;
+      } catch (parseErr) {
+        console.error("❌ TTS error (raw buffer):", errorData.toString("utf8"));
+        message = errorData.toString("utf8") || message;
+      }
+    } else {
+      console.error("❌ TTS error:", errorData || error.message);
+      message = errorData?.errorMessage || errorData?.error || errorData?.message || error.message || message;
     }
 
-    res.status(err.response?.status || 500).json({
-      error: err.response?.data || err.message || "TTS failed",
+    console.error("Full error details:", {
+      status,
+      message,
+      endpoint: MURF_ENDPOINT,
+      voice: voiceId,
+      payloadKeys: Object.keys(payload)
     });
+
+    res.status(status).json({ error: message });
   }
 });
 
-// ------------------ Start Server ------------------
+// Health check
+app.get("/health", (req, res) => {
+  res.json({ 
+    status: "OK", 
+    apiKeyLoaded: !!MURF_API_KEY,
+    endpoint: MURF_ENDPOINT,
+    supportedVoices: validVoices 
+  });
+});
+
+// Voices endpoint for frontend
+app.get("/api/voices", (req, res) => {
+  res.json(validVoices.map(voice => ({ voiceId: voice })));
+});
+
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`✅ Backend running on http://localhost:${PORT}`);
+  console.log(`✅ Backend running at http://localhost:${PORT}`);
+  console.log("MURF_API_KEY loaded:", MURF_API_KEY ? "Yes" : "No (check .env)");
+  console.log("Current endpoint:", MURF_ENDPOINT);
+  console.log("Supported voices:", validVoices);
+  console.log("Test health: http://localhost:5000/health");
+  console.log("Hackathon tip: Update MURF_ENDPOINT in .env and restart to test new paths!");
 });
