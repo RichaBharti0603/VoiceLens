@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import axios from "axios";
 import dotenv from "dotenv";
+import WebSocket, { WebSocketServer } from 'ws';
 
 dotenv.config();
 
@@ -10,7 +11,7 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 const MURF_API_KEY = process.env.MURF_API_KEY;
 
 console.log("🔧 VoiceAssist Backend starting...");
@@ -26,41 +27,156 @@ const murfHeaders = {
   "Content-Type": "application/json"
 };
 
-// Indian language voices mapping
-const INDIAN_VOICES = {
-  'en': ['en-UK-hazel', 'en-US-ryan', 'en-AU-luna'],
-  'hi': ['hi-IN-priya', 'hi-IN-raj'], // Hindi
-  'mr': ['mr-IN-sneha', 'mr-IN-raj'], // Marathi
-  'te': ['te-IN-priya', 'te-IN-krishna'], // Telugu
-  'kn': ['kn-IN-sneha', 'kn-IN-raj'], // Kannada
-  'gu': ['gu-IN-priya', 'gu-IN-raj'], // Gujarati
-  'ta': ['ta-IN-priya', 'ta-IN-krishna'], // Tamil
-  'ml': ['ml-IN-sneha', 'ml-IN-raj'], // Malayalam
-  'bn': ['bn-IN-priya', 'bn-IN-raj'], // Bengali
-  'pa': ['pa-IN-priya', 'pa-IN-raj']  // Punjabi
+// Voice cache - will be populated from Murf API
+let AVAILABLE_VOICES = [];
+let VOICES_BY_LANGUAGE = {
+  'en': [], 'hi': [], 'mr': [], 'te': [], 'kn': [], 
+  'gu': [], 'ta': [], 'ml': [], 'bn': [], 'pa': []
 };
 
+// WebSocket server setup
+const wss = new WebSocketServer({ port: 8080 });
+
+// Initialize voices from Murf API
+async function initializeVoices() {
+  try {
+    console.log('🔄 Fetching available voices from Murf API...');
+    const response = await axios.get(MURF_VOICES_ENDPOINT, {
+      headers: murfHeaders
+    });
+    
+    AVAILABLE_VOICES = response.data.map(voice => ({
+      id: voice.voiceId,
+      name: voice.displayName,
+      gender: voice.gender,
+      language: voice.language?.code || 'en',
+      accent: voice.accent || 'Unknown',
+      sampleRate: voice.sampleRate
+    }));
+    
+    console.log('✅ Successfully fetched', AVAILABLE_VOICES.length, 'voices from Murf');
+    
+    // Group voices by language
+    AVAILABLE_VOICES.forEach(voice => {
+      // Map English voices to all Indian languages as fallback
+      if (voice.language === 'en') {
+        Object.keys(VOICES_BY_LANGUAGE).forEach(lang => {
+          VOICES_BY_LANGUAGE[lang].push(voice);
+        });
+      }
+      // Add language-specific voices if available
+      else if (VOICES_BY_LANGUAGE[voice.language]) {
+        VOICES_BY_LANGUAGE[voice.language].push(voice);
+      }
+    });
+    
+    console.log('🎯 Voice distribution:');
+    Object.keys(VOICES_BY_LANGUAGE).forEach(lang => {
+      console.log(`   ${lang}: ${VOICES_BY_LANGUAGE[lang].length} voices`);
+    });
+    
+  } catch (error) {
+    console.error('❌ Failed to fetch voices from Murf:', error.message);
+    // Fallback to basic English voices
+    AVAILABLE_VOICES = [
+      { id: 'en_us_001', name: 'US Male', gender: 'male', language: 'en', accent: 'US English' },
+      { id: 'en_us_002', name: 'US Female', gender: 'female', language: 'en', accent: 'US English' }
+    ];
+    Object.keys(VOICES_BY_LANGUAGE).forEach(lang => {
+      VOICES_BY_LANGUAGE[lang] = [...AVAILABLE_VOICES];
+    });
+  }
+}
+
+wss.on('connection', (ws) => {
+  console.log('🎯 New WebSocket connection established');
+  
+  ws.on('message', async (message) => {
+    try {
+      const data = JSON.parse(message);
+      
+      if (data.type === 'tts') {
+        console.log('🔄 Processing real-time TTS:', { 
+          text: data.text.substring(0, 50) + (data.text.length > 50 ? '...' : ''), 
+          voice: data.voice 
+        });
+        
+        const audioBuffer = await generateTTS(data.text, data.voice);
+        
+        if (audioBuffer) {
+          ws.send(JSON.stringify({
+            type: 'audio',
+            audio: audioBuffer.toString('base64'),
+            size: audioBuffer.length,
+            duration: estimateAudioDuration(audioBuffer.length)
+          }));
+          console.log('✅ TTS successful, final audio size:', audioBuffer.length);
+        } else {
+          ws.send(JSON.stringify({
+            type: 'error',
+            error: 'Failed to generate audio'
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('❌ WebSocket message error:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        error: error.message
+      }));
+    }
+  });
+  
+  ws.on('close', () => {
+    console.log('🔌 WebSocket connection closed');
+  });
+  
+  ws.on('error', (error) => {
+    console.error('❌ WebSocket error:', error);
+  });
+});
+
+console.log('🔌 WebSocket server started on port 8080');
+
+// Initialize voices on startup
+initializeVoices();
+
+// Health check endpoint
 app.get("/health", (req, res) => {
   res.json({ 
     status: "healthy", 
     service: "VoiceAssist Accessibility Platform",
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    version: "2.0.0",
+    features: ["TTS", "Multi-language", "Batch Processing", "Text Analysis", "WebSocket Real-time"],
+    voices: {
+      total: AVAILABLE_VOICES.length,
+      byLanguage: Object.keys(VOICES_BY_LANGUAGE).reduce((acc, lang) => {
+        acc[lang] = VOICES_BY_LANGUAGE[lang].length;
+        return acc;
+      }, {})
+    },
+    websocket: {
+      status: "active",
+      port: 8080,
+      connections: wss.clients.size
+    }
   });
 });
 
-// Get available languages and voices
+// Get available languages
 app.get("/api/languages", (req, res) => {
   const languages = [
-    { code: 'en', name: 'English', nativeName: 'English' },
-    { code: 'hi', name: 'Hindi', nativeName: 'हिन्दी' },
-    { code: 'mr', name: 'Marathi', nativeName: 'मराठी' },
-    { code: 'te', name: 'Telugu', nativeName: 'తెలుగు' },
-    { code: 'kn', name: 'Kannada', nativeName: 'ಕನ್ನಡ' },
-    { code: 'gu', name: 'Gujarati', nativeName: 'ગુજરાતી' },
-    { code: 'ta', name: 'Tamil', nativeName: 'தமிழ்' },
-    { code: 'ml', name: 'Malayalam', nativeName: 'മലയാളം' },
-    { code: 'bn', name: 'Bengali', nativeName: 'বাংলা' },
-    { code: 'pa', name: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ' }
+    { code: 'en', name: 'English', nativeName: 'English', speakers: '1.5B' },
+    { code: 'hi', name: 'Hindi', nativeName: 'हिन्दी', speakers: '600M' },
+    { code: 'mr', name: 'Marathi', nativeName: 'मराठी', speakers: '83M' },
+    { code: 'te', name: 'Telugu', nativeName: 'తెలుగు', speakers: '82M' },
+    { code: 'kn', name: 'Kannada', nativeName: 'ಕನ್ನಡ', speakers: '44M' },
+    { code: 'gu', name: 'Gujarati', nativeName: 'ગુજરાતી', speakers: '55M' },
+    { code: 'ta', name: 'Tamil', nativeName: 'தமிழ்', speakers: '75M' },
+    { code: 'ml', name: 'Malayalam', nativeName: 'മലയാളം', speakers: '38M' },
+    { code: 'bn', name: 'Bengali', nativeName: 'বাংলা', speakers: '230M' },
+    { code: 'pa', name: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ', speakers: '125M' }
   ];
   
   res.json(languages);
@@ -69,37 +185,126 @@ app.get("/api/languages", (req, res) => {
 // Get voices for a specific language
 app.get("/api/voices/:language", (req, res) => {
   const { language } = req.params;
-  const voices = INDIAN_VOICES[language] || INDIAN_VOICES.en;
+  const voices = VOICES_BY_LANGUAGE[language] || VOICES_BY_LANGUAGE.en;
   
-  res.json(voices.map(voiceId => ({
-    id: voiceId,
-    name: voiceId.split('-').join(' '),
-    gender: voiceId.includes('priya') || voiceId.includes('sneha') || voiceId.includes('luna') ? 'female' : 'male'
+  res.json(voices.map(voice => ({
+    ...voice,
+    sampleText: getSampleText(language)
   })));
 });
 
-// Enhanced TTS endpoint for accessibility features
+// Get all available voices
+app.get("/api/available-voices", (req, res) => {
+  res.json(AVAILABLE_VOICES);
+});
+
+// Enhanced TTS endpoint with voice validation
 app.post("/api/tts", async (req, res) => {
-  const { text, voice, language, speed = 1.0 } = req.body;
+  const { text, voice, language, speed = 1.0, pitch = 0 } = req.body;
 
   console.log("🎯 Accessibility TTS Request:", { 
     text: text.substring(0, 100) + (text.length > 100 ? '...' : ''), 
     voice, 
     language,
-    speed 
+    speed,
+    pitch
   });
 
   if (!text || !voice) {
     return res.status(400).json({ error: "Text and voice are required" });
   }
 
-  try {
-    const requestBody = {
-      voiceId: voice,
-      text: text,
-      format: "MP3"
-    };
+  // Validate voice ID
+  const validVoice = AVAILABLE_VOICES.find(v => v.id === voice);
+  if (!validVoice) {
+    return res.status(400).json({ 
+      error: "Invalid voice ID",
+      availableVoices: AVAILABLE_VOICES.map(v => ({ id: v.id, name: v.name, language: v.language }))
+    });
+  }
 
+  // Validate text length
+  if (text.length > 5000) {
+    return res.status(400).json({ 
+      error: "Text too long. Maximum 5000 characters allowed." 
+    });
+  }
+
+  try {
+    const audioBuffer = await generateTTS(text, voice, speed, pitch);
+    
+    if (!audioBuffer) {
+      return res.status(500).json({ error: "Could not generate audio" });
+    }
+
+    res.set({
+      "Content-Type": "audio/mpeg",
+      "Content-Length": audioBuffer.length,
+      "Content-Disposition": "inline; filename=accessibility-audio.mp3",
+      "Cache-Control": "no-cache",
+      "X-Audio-Duration": estimateAudioDuration(audioBuffer.length),
+      "X-Text-Length": text.length
+    });
+
+    res.send(audioBuffer);
+
+  } catch (err) {
+    console.error("❌ TTS Error:", err.message);
+    
+    if (err.response) {
+      const errorData = err.response.data;
+      let errorMessage = "TTS service error";
+      
+      if (Buffer.isBuffer(errorData)) {
+        try {
+          const jsonError = JSON.parse(errorData.toString());
+          errorMessage = jsonError.errorMessage || jsonError.message || errorMessage;
+        } catch (e) {
+          errorMessage = errorData.toString();
+        }
+      }
+      
+      if (err.response.status === 400) {
+        return res.status(400).json({ 
+          error: "Invalid request to TTS service",
+          details: errorMessage
+        });
+      } else if (err.response.status === 401) {
+        return res.status(401).json({ error: "Invalid API key" });
+      } else if (err.response.status === 429) {
+        return res.status(429).json({ error: "Rate limit exceeded. Please try again later." });
+      }
+    } else if (err.code === 'ECONNABORTED') {
+      return res.status(408).json({ error: "Request timeout" });
+    }
+    
+    res.status(500).json({ error: "TTS failed: " + err.message });
+  }
+});
+
+// Core TTS generation function
+async function generateTTS(text, voice, speed = 1.0, pitch = 0) {
+  // Clean and normalize the text
+  const cleanedText = cleanTextForTTS(text);
+  
+  console.log("🔊 Sending to Murf API - Voice:", voice, "Text length:", cleanedText.length);
+
+  const requestBody = {
+    voiceId: voice,
+    text: cleanedText,
+    format: "MP3"
+  };
+
+  // Only add optional parameters if they differ from defaults
+  if (speed !== 1.0) {
+    requestBody.speed = Math.max(0.5, Math.min(2.0, speed));
+  }
+  
+  if (pitch !== 0) {
+    requestBody.pitch = Math.max(-12, Math.min(12, pitch));
+  }
+
+  try {
     const response = await axios.post(
       MURF_TTS_ENDPOINT,
       requestBody,
@@ -110,9 +315,9 @@ app.post("/api/tts", async (req, res) => {
       }
     );
 
-    console.log("✅ TTS success - Size:", response.data.byteLength, "bytes");
+    console.log("✅ Murf API response received - Size:", response.data.byteLength, "bytes");
 
-    // Handle JSON response with URL (as we discovered earlier)
+    // Handle JSON response with URL
     const analysis = analyzeResponse(response.data);
     let audioBuffer;
 
@@ -124,26 +329,25 @@ app.post("/api/tts", async (req, res) => {
       audioBuffer = analysis.buffer;
     }
 
-    if (!audioBuffer) {
-      return res.status(500).json({ error: "Could not process audio" });
-    }
-
-    res.set({
-      "Content-Type": "audio/mpeg",
-      "Content-Length": audioBuffer.length,
-      "Content-Disposition": "inline; filename=accessibility-audio.mp3",
-      "Cache-Control": "no-cache"
-    });
-
-    res.send(audioBuffer);
-
-  } catch (err) {
-    console.error("❌ TTS Error:", err.message);
-    res.status(500).json({ error: "TTS failed: " + err.message });
+    return audioBuffer;
+  } catch (error) {
+    console.error("❌ Murf API Error:", error.response?.data || error.message);
+    throw error;
   }
-});
+}
 
-// Text processing for accessibility - clean text for better TTS
+// Text cleaning function for TTS
+function cleanTextForTTS(text) {
+  return text
+    .replace(/\s+/g, ' ') // Remove extra spaces
+    .replace(/([.!?])\s*/g, '$1 ') // Ensure space after punctuation
+    .replace(/\.{3,}/g, '…') // Convert multiple dots to ellipsis
+    .replace(/\s+\./g, '. ') // Fix spacing before periods
+    .replace(/([.,!?])([A-Za-z])/g, '$1 $2') // Add space after punctuation if missing
+    .trim();
+}
+
+// Text processing endpoint
 app.post("/api/process-text", (req, res) => {
   const { text, language } = req.body;
   
@@ -151,94 +355,58 @@ app.post("/api/process-text", (req, res) => {
     return res.status(400).json({ error: "Text is required" });
   }
 
-  // Clean and process text for better TTS output
-  let processedText = text
-    .replace(/\s+/g, ' ') // Remove extra spaces
-    .replace(/([.!?])\s*/g, '$1 ') // Ensure space after punctuation
-    .trim();
-
-  // Add language-specific processing
-  if (language === 'hi' || language === 'mr' || language === 'ta' || language === 'te' || 
-      language === 'kn' || language === 'gu' || language === 'ml' || language === 'bn' || language === 'pa') {
-    // For Indian languages, ensure proper spacing and punctuation
-    processedText = processedText
-      .replace(/([।?!])\s*/g, '$1 ') // Indian punctuation
-      .replace(/\s+\./g, '. ') // Fix spacing before periods
-      .trim();
-  }
+  const processedText = cleanTextForTTS(text);
+  const sentences = processedText.split(/(?<=[.!?])\s+/).filter(s => s.length > 0);
 
   res.json({
     originalLength: text.length,
     processedLength: processedText.length,
     processedText: processedText,
+    sentences: sentences,
+    sentenceCount: sentences.length,
     language: language
   });
 });
 
-// Batch TTS for longer documents
-app.post("/api/tts-batch", async (req, res) => {
-  const { chunks, voice, language } = req.body;
+// Test endpoint with simple English text
+app.post("/api/tts-test", async (req, res) => {
+  // Use the first available voice for testing
+  const testVoice = AVAILABLE_VOICES.length > 0 ? AVAILABLE_VOICES[0].id : 'en_us_001';
+  const testText = "Hello! Welcome to VoiceAssist. This is a test of the text to speech system.";
   
-  if (!chunks || !Array.isArray(chunks) || chunks.length === 0) {
-    return res.status(400).json({ error: "Text chunks are required" });
-  }
-
   try {
-    const audioChunks = [];
+    console.log("🧪 Running TTS test with voice:", testVoice);
+    const audioBuffer = await generateTTS(testText, testVoice);
     
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      console.log(`🔄 Processing chunk ${i + 1}/${chunks.length}`);
-      
-      const requestBody = {
-        voiceId: voice,
-        text: chunk,
-        format: "MP3"
-      };
-
-      const response = await axios.post(
-        MURF_TTS_ENDPOINT,
-        requestBody,
-        {
-          responseType: "arraybuffer",
-          headers: murfHeaders,
-          timeout: 30000
-        }
-      );
-
-      const analysis = analyzeResponse(response.data);
-      let audioBuffer;
-
-      if (analysis.responseType === 'json') {
-        const jsonText = Buffer.from(response.data).toString('utf-8');
-        const jsonData = JSON.parse(jsonText);
-        audioBuffer = await extractAudioFromMurfJSON(jsonData);
-      } else {
-        audioBuffer = analysis.buffer;
-      }
-
-      if (audioBuffer) {
-        audioChunks.push({
-          index: i,
-          audio: audioBuffer.toString('base64'),
-          size: audioBuffer.length
-        });
-      }
+    if (audioBuffer) {
+      res.set({
+        "Content-Type": "audio/mpeg",
+        "Content-Length": audioBuffer.length,
+        "Content-Disposition": "inline; filename=test-audio.mp3"
+      });
+      res.send(audioBuffer);
+      console.log("✅ Test successful - Audio size:", audioBuffer.length);
+    } else {
+      res.status(500).json({ error: "Test failed - no audio generated" });
     }
-
-    res.json({
-      totalChunks: chunks.length,
-      processedChunks: audioChunks.length,
-      audioChunks: audioChunks
-    });
-
-  } catch (err) {
-    console.error("❌ Batch TTS Error:", err.message);
-    res.status(500).json({ error: "Batch TTS failed: " + err.message });
+  } catch (error) {
+    console.error("❌ TTS Test Error:", error.message);
+    res.status(500).json({ error: "Test failed: " + error.message });
   }
 });
 
-// Helper functions (from your previous working code)
+// WebSocket status endpoint
+app.get('/api/websocket-status', (req, res) => {
+  res.json({ 
+    status: 'active', 
+    port: 8080,
+    protocol: 'ws',
+    connections: wss.clients.size,
+    supported: true
+  });
+});
+
+// Helper functions
 function analyzeResponse(data) {
   const buffer = Buffer.from(data);
   const firstBytes = buffer.slice(0, 16);
@@ -296,7 +464,57 @@ async function extractAudioFromMurfJSON(jsonData) {
   return audioBuffer;
 }
 
+function getSampleText(language) {
+  const samples = {
+    'en': "Hello! Welcome to VoiceAssist Accessibility Platform.",
+    'hi': "नमस्ते! वॉयसअसिस्ट एक्सेसिबिलिटी प्लेटफॉर्म में आपका स्वागत है।",
+    'mr': "नमस्कार! वॉयसअसिस्ट ऍक्सेसिबिलिटी प्लॅटफॉर्म मध्ये आपले स्वागत आहे.",
+    'te': "హలో! వాయ్స్ అసిస్ట్ యాక్సెసిబిలిటీ ప్లాట్ఫారమ్ కు స్వాగతం.",
+    'kn': "ನಮಸ್ಕಾರ! ವಾಯ್ಸ್ ಅಸಿಸ್ಟ್ ಪ್ರವೇಶಸಾಧ್ಯತೆ ವೇದಿಕೆಗೆ ಸುಸ್ವಾಗತ.",
+    'gu': "નમસ્તે! વ voiceઇસઅસિસ્ટ એક્સેસિબિલિટી પ્લેટફોર્મમાં આપનું સ્વાગત છે.",
+    'ta': "வணக்கம்! வாய்ஸ் அசிஸ்ட் அக்செசிபிலிட்டி பிளாட்ஃபார்மிற்கு வரவேற்கிறோம்.",
+    'ml': "നമസ്കാരം! വ voice ഇസ് അസിസ്റ്റ് ആക്‌സസ്സിബിലിറ്റി പ്ലാറ്റ്ഫോമിലേക്ക് സ്വാഗതം.",
+    'bn': "হ্যালো! ভয়েস অ্যাসিস্ট অ্যাক্সেসিবিলিটি প্ল্যাটফর্মে আপনাকে স্বাগতম।",
+    'pa': "ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਵ voice ਇਸ ਅਸਿਸਟ ਐਕਸੈਸਬਿਲਿਟੀ ਪਲੇਟਫਾਰਮ ਵਿੱਚ ਜੀ ਆਇਆਂ ਨੂੰ।"
+  };
+  
+  return samples[language] || samples['en'];
+}
+
+function estimateAudioDuration(audioSizeBytes) {
+  const bytesPerSecond = 16000;
+  return Math.round(audioSizeBytes / bytesPerSecond);
+}
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'Endpoint not found',
+    availableEndpoints: [
+      'GET /health',
+      'GET /api/languages',
+      'GET /api/voices/:language',
+      'GET /api/available-voices',
+      'POST /api/tts',
+      'POST /api/tts-test',
+      'POST /api/process-text',
+      'GET /api/websocket-status'
+    ]
+  });
+});
+
+// Error handling middleware
+app.use((error, req, res, next) => {
+  console.error('🚨 Unhandled Error:', error);
+  res.status(500).json({
+    error: 'Internal server error',
+    message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`🎧 VoiceAssist Accessibility Platform running at http://localhost:${PORT}`);
-  console.log(`🌍 Supporting 10 Indian languages for social good`);
+  console.log(`🔌 WebSocket server running at ws://localhost:8080`);
+  console.log(`🌍 Supporting ${Object.keys(VOICES_BY_LANGUAGE).length} Indian languages for social good`);
+  console.log(`📊 Features: TTS, Batch Processing, Real-time WebSocket, Accessibility Tools`);
 });
