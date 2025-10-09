@@ -88,7 +88,133 @@ app.get("/api/voices", async (req, res) => {
   }
 });
 
-// Enhanced TTS endpoint with better audio handling
+// Function to analyze response data
+function analyzeResponse(data) {
+  const buffer = Buffer.from(data);
+  console.log("🔍 Analyzing response data...");
+  console.log("📊 Total size:", buffer.length, "bytes");
+  
+  // Check first bytes to determine format
+  const firstBytes = buffer.slice(0, 16);
+  const hex = firstBytes.toString('hex');
+  const ascii = firstBytes.toString('ascii');
+  
+  console.log("🔍 First 16 bytes (hex):", hex);
+  console.log("🔍 First 16 bytes (ascii):", ascii);
+  
+  let responseType = 'unknown';
+  
+  if (hex.startsWith('7b22') || ascii.startsWith('{"') || ascii.startsWith('{')) {
+    responseType = 'json';
+    console.log("🔍 Response type: JSON");
+  } else if (hex.startsWith('494433') || hex.startsWith('fff')) {
+    responseType = 'mp3';
+    console.log("🔍 Response type: MP3 audio");
+  } else if (hex.startsWith('52494646')) {
+    responseType = 'wav';
+    console.log("🔍 Response type: WAV audio");
+  } else {
+    responseType = 'binary';
+    console.log("🔍 Response type: Binary data (possibly raw audio)");
+  }
+  
+  return { responseType, hex, ascii, buffer };
+}
+
+// Function to download audio from URL
+async function downloadAudioFromUrl(url) {
+  console.log("🔗 Downloading audio from URL:", url);
+  
+  try {
+    const response = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    console.log("✅ Audio download successful - Size:", response.data.byteLength, "bytes");
+    return Buffer.from(response.data);
+    
+  } catch (error) {
+    console.error("❌ Audio download failed:", error.message);
+    throw error;
+  }
+}
+
+// Function to extract audio from Murf's JSON response
+async function extractAudioFromMurfJSON(jsonData) {
+  console.log("🔄 Extracting audio from Murf JSON response...");
+  console.log("📋 Available fields:", Object.keys(jsonData));
+  
+  // Murf returns audio in different possible ways
+  let audioBuffer = null;
+  
+  // Case 1: audioFile contains a URL (most common)
+  if (jsonData.audioFile && typeof jsonData.audioFile === 'string') {
+    console.log("📋 Found 'audioFile' field:", jsonData.audioFile.substring(0, 100) + "...");
+    
+    if (jsonData.audioFile.startsWith('http')) {
+      console.log("🔍 audioFile is a URL - downloading...");
+      try {
+        audioBuffer = await downloadAudioFromUrl(jsonData.audioFile);
+        console.log("✅ Successfully downloaded audio from URL");
+      } catch (downloadError) {
+        console.error("❌ Failed to download from URL:", downloadError.message);
+      }
+    } 
+    else if (jsonData.audioFile.startsWith('data:audio')) {
+      console.log("🔍 audioFile is a data URL");
+      const base64Match = jsonData.audioFile.match(/base64,(.+)$/);
+      if (base64Match && base64Match[1]) {
+        audioBuffer = Buffer.from(base64Match[1], 'base64');
+        console.log("✅ Extracted base64 from data URL");
+      }
+    } 
+    else {
+      // Assume it's direct base64
+      console.log("🔍 audioFile appears to be direct base64");
+      audioBuffer = Buffer.from(jsonData.audioFile, 'base64');
+    }
+  }
+  
+  // Case 2: encodedAudio contains base64 data
+  if (!audioBuffer && jsonData.encodedAudio && typeof jsonData.encodedAudio === 'string') {
+    console.log("✅ Found audio in 'encodedAudio' field");
+    audioBuffer = Buffer.from(jsonData.encodedAudio, 'base64');
+  }
+  
+  // Case 3: data field contains audio
+  if (!audioBuffer && jsonData.data && typeof jsonData.data === 'string') {
+    console.log("✅ Found audio in 'data' field");
+    audioBuffer = Buffer.from(jsonData.data, 'base64');
+  }
+  
+  // Case 4: Search for any base64 field
+  if (!audioBuffer) {
+    console.log("🔍 Searching for base64 data in all fields...");
+    for (const [key, value] of Object.entries(jsonData)) {
+      if (typeof value === 'string' && value.length > 100) {
+        if (/^[A-Za-z0-9+/=]+$/.test(value)) {
+          console.log(`✅ Found potential base64 in field '${key}'`);
+          audioBuffer = Buffer.from(value, 'base64');
+          break;
+        }
+      }
+    }
+  }
+  
+  if (!audioBuffer) {
+    console.error("❌ Could not find or download audio data in JSON response");
+    return null;
+  }
+  
+  console.log("✅ Audio data extracted, size:", audioBuffer.length, "bytes");
+  return audioBuffer;
+}
+
+// Main TTS endpoint
 app.post("/api/tts", async (req, res) => {
   const { text, voice } = req.body;
 
@@ -101,12 +227,13 @@ app.post("/api/tts", async (req, res) => {
   try {
     console.log("🔊 Sending request to Murf TTS API...");
     
-    // Use minimal parameters for maximum compatibility
     const requestBody = {
       voiceId: voice,
       text: text,
       format: "MP3"
     };
+
+    console.log("📤 Request body:", JSON.stringify(requestBody));
 
     const response = await axios.post(
       MURF_TTS_ENDPOINT,
@@ -118,18 +245,39 @@ app.post("/api/tts", async (req, res) => {
       }
     );
 
-    console.log("✅ Murf TTS success - Audio size:", response.data.byteLength, "bytes");
+    console.log("✅ Murf API response received - Size:", response.data.byteLength, "bytes");
 
-    // Validate the audio data
-    const audioBuffer = Buffer.from(response.data);
+    // Analyze what we received
+    const analysis = analyzeResponse(response.data);
     
-    // Check if it's a valid MP3 by looking for common MP3 headers
-    const isValid = validateMP3(audioBuffer);
-    console.log("🔍 MP3 Validation:", isValid ? "✅ Valid" : "❌ Invalid");
+    let audioBuffer;
     
-    if (!isValid) {
-      console.warn("⚠️ Audio may not be standard MP3 format");
+    if (analysis.responseType === 'json') {
+      // It's JSON - parse it and extract audio data
+      console.log("🔄 Parsing JSON response...");
+      const jsonText = Buffer.from(response.data).toString('utf-8');
+      const jsonData = JSON.parse(jsonText);
+      
+      console.log("📋 JSON response keys:", Object.keys(jsonData));
+      
+      // Extract audio using our specialized function (now async)
+      audioBuffer = await extractAudioFromMurfJSON(jsonData);
+      
+      if (!audioBuffer) {
+        return res.status(500).json({ error: "Could not extract audio data from Murf response" });
+      }
+      
+    } else {
+      // It's already binary audio data
+      console.log("✅ Received binary audio data");
+      audioBuffer = analysis.buffer;
     }
+
+    console.log("✅ Final audio buffer size:", audioBuffer.length, "bytes");
+    
+    // Final validation
+    const finalAnalysis = analyzeResponse(audioBuffer);
+    console.log("🔍 Final data type:", finalAnalysis.responseType);
 
     res.set({
       "Content-Type": "audio/mpeg",
@@ -142,11 +290,26 @@ app.post("/api/tts", async (req, res) => {
 
   } catch (err) {
     console.error("❌ TTS Error:", err.message);
-    res.status(500).json({ error: "TTS failed: " + err.message });
+    
+    if (err.response) {
+      console.error("🔍 Error response status:", err.response.status);
+      console.error("🔍 Error response data:", err.response.data);
+      
+      try {
+        const errorText = Buffer.from(err.response.data).toString('utf-8');
+        console.error("🔍 Error response text:", errorText);
+        const errorData = JSON.parse(errorText);
+        res.status(err.response.status).json({ error: errorData.errorMessage || errorData.error || "Murf API error" });
+      } catch (parseError) {
+        res.status(err.response.status).json({ error: `Murf API error: ${err.response.status}` });
+      }
+    } else {
+      res.status(500).json({ error: "TTS failed: " + err.message });
+    }
   }
 });
 
-// Base64 endpoint with validation
+// Base64 endpoint
 app.post("/api/tts-base64", async (req, res) => {
   const { text, voice } = req.body;
 
@@ -169,12 +332,41 @@ app.post("/api/tts-base64", async (req, res) => {
       }
     );
 
-    console.log("✅ Murf TTS success - Audio size:", response.data.byteLength, "bytes");
+    console.log("✅ Murf API response received - Size:", response.data.byteLength, "bytes");
 
-    // Validate audio
-    const audioBuffer = Buffer.from(response.data);
-    const isValid = validateMP3(audioBuffer);
-    console.log("🔍 MP3 Validation:", isValid ? "✅ Valid" : "❌ Invalid");
+    // Analyze response
+    const analysis = analyzeResponse(response.data);
+    
+    let audioBuffer;
+    let extractionDetails = {};
+    
+    if (analysis.responseType === 'json') {
+      const jsonText = Buffer.from(response.data).toString('utf-8');
+      const jsonData = JSON.parse(jsonText);
+      
+      console.log("📋 JSON keys:", Object.keys(jsonData));
+      
+      // Extract audio using our specialized function
+      audioBuffer = await extractAudioFromMurfJSON(jsonData);
+      
+      if (!audioBuffer) {
+        throw new Error("Could not extract audio data from Murf response");
+      }
+      
+      extractionDetails = {
+        wasJson: true,
+        fieldsFound: Object.keys(jsonData),
+        audioSource: 'downloaded from URL'
+      };
+    } else {
+      audioBuffer = analysis.buffer;
+      extractionDetails = {
+        wasJson: false,
+        audioSource: 'direct binary'
+      };
+    }
+
+    console.log("✅ Final audio size:", audioBuffer.length, "bytes");
 
     // Convert to base64
     const base64Audio = audioBuffer.toString('base64');
@@ -182,8 +374,9 @@ app.post("/api/tts-base64", async (req, res) => {
     res.json({
       audio: base64Audio,
       format: "mp3",
-      size: response.data.byteLength,
-      isValid: isValid
+      size: audioBuffer.length,
+      ...extractionDetails,
+      responseType: analysis.responseType
     });
 
   } catch (err) {
@@ -192,51 +385,23 @@ app.post("/api/tts-base64", async (req, res) => {
   }
 });
 
-// Simple MP3 validation function
-function validateMP3(buffer) {
-  if (buffer.length < 4) return false;
-  
-  // Check for common MP3 headers
-  const header = buffer.slice(0, 4);
-  
-  // MP3 files typically start with:
-  // - ID3 header (for ID3v2 tags): 0x49 0x44 0x33 (ASCII "ID3")
-  // - MPEG frame header: 0xFF 0xFB or 0xFF 0xFA or 0xFF 0xF3, etc.
-  
-  const firstByte = header[0];
-  const secondByte = header[1];
-  const thirdByte = header[2];
-  
-  // Check for ID3 header
-  if (firstByte === 0x49 && secondByte === 0x44 && thirdByte === 0x33) {
-    return true; // ID3v2 tag present
-  }
-  
-  // Check for MPEG frame sync (starts with 0xFF and has specific patterns)
-  if (firstByte === 0xFF && (secondByte & 0xE0) === 0xE0) {
-    return true; // MPEG frame header
-  }
-  
-  return false;
-}
-
-// New endpoint: Test if audio can be played by returning a known good audio file
+// Test endpoint with real MP3
 app.get("/api/test-audio", (req, res) => {
-  // Return a simple, known-working audio file for testing
-  const testAudio = Buffer.from([
-    0xFF, 0xFB, 0x90, 0x64, 0x00, 0x0F, 0xF0, 0x00, 0x00, 0x69, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00,
-    0x0D, 0x20, 0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0xA4, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x34,
-    0x80, 0x00, 0x00, 0x04, 0x4C, 0x41, 0x4D, 0x45, 0x33, 0x2E, 0x31, 0x30, 0x30, 0x55, 0x55, 0x55,
-    0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55
+  // Real MP3 data for a short beep
+  const realMP3 = Buffer.from([
+    0xFF, 0xFB, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
   ]);
 
   res.set({
     "Content-Type": "audio/mpeg",
-    "Content-Length": testAudio.length,
+    "Content-Length": realMP3.length,
     "Content-Disposition": "inline; filename=test-audio.mp3"
   });
 
-  res.send(testAudio);
+  res.send(realMP3);
 });
 
 app.listen(PORT, () => console.log(`✅ Backend running at http://localhost:5000`));
