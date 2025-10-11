@@ -59,6 +59,19 @@ let analyticsData = {
   dailyStats: {}
 };
 
+// ADD THIS FUNCTION FOR HACKATHON DEMO DATA
+function generateDemoData() {
+  return {
+    languages: { 'en': 45, 'hi': 32, 'mr': 18, 'te': 15, 'ta': 12, 'kn': 10, 'gu': 8, 'ml': 7, 'bn': 6, 'pa': 5 },
+    voices: { 'en_us_nova': 38, 'en_us_ryan': 32, 'en_uk_hazel': 25, 'en_au_luna': 18, 'en_us_dylan': 15 },
+    features: { 'text': 85, 'document': 42, 'realtime': 28, 'batch': 15 },
+    totalRequests: 150,
+    totalCharacters: 125000,
+    accessibilityImpact: { estimatedTimeSaved: 156, documentsMadeAccessible: 87 }
+  };
+}
+
+
 // Enhanced Indian language voices mapping
 const INDIAN_VOICES = {
   'en': [
@@ -253,48 +266,48 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Analytics Dashboard endpoint
 app.get("/api/analytics/dashboard", (req, res) => {
   const now = new Date();
   const today = now.toISOString().split('T')[0];
   
-  const totalLanguages = Object.keys(analyticsData.languages).length;
-  const totalVoices = Object.keys(analyticsData.voices).length;
+  // USE DEMO DATA IF REAL DATA IS EMPTY (FOR HACKATHON)
+  const useDemoData = analyticsData.totalCharactersProcessed === 0;
+  const demoData = useDemoData ? generateDemoData() : null;
   
-  const popularLanguages = Object.entries(analyticsData.languages)
-    .sort(([,a], [,b]) => b - a)
-    .slice(0, 5)
-    .map(([lang, count]) => ({ language: lang, count }));
+  // Calculate real metrics
+  const totalLanguages = useDemoData ? Object.keys(demoData.languages).length : Object.keys(analyticsData.languages).length;
+  const totalVoices = useDemoData ? Object.keys(demoData.voices).length : Object.keys(analyticsData.voices).length;
   
-  const popularVoices = Object.entries(analyticsData.voices)
-    .sort(([,a], [,b]) => b - a)
-    .slice(0, 5)
-    .map(([voice, count]) => ({ voice, count }));
+  // Popular languages
+  const popularLanguages = useDemoData ? 
+    Object.entries(demoData.languages).slice(0, 5).map(([lang, count]) => ({ language: lang, count })) :
+    Object.entries(analyticsData.languages).slice(0, 5).map(([lang, count]) => ({ language: lang, count }));
   
-  const totalFeatures = Object.values(analyticsData.features).reduce((a, b) => a + b, 0);
-  const featureDistribution = Object.entries(analyticsData.features).map(([feature, count]) => ({
-    feature,
-    count,
-    percentage: totalFeatures > 0 ? Math.round((count / totalFeatures) * 100) : 0
-  }));
+  // Popular voices
+  const popularVoices = useDemoData ?
+    Object.entries(demoData.voices).slice(0, 5).map(([voice, count]) => ({ voice, count })) :
+    Object.entries(analyticsData.voices).slice(0, 5).map(([voice, count]) => ({ voice, count }));
   
-  const estimatedPeopleHelped = Math.floor(analyticsData.accessibilityImpact.documentsMadeAccessible / 10);
-  const carbonFootprintSaved = (analyticsData.accessibilityImpact.estimatedTimeSaved / 60) * 0.1;
-  
-  res.json({
+  // Feature distribution
+  const featureDistribution = useDemoData ?
+    Object.entries(demoData.features).map(([feature, count]) => ({ feature, count, percentage: Math.round((count / demoData.totalRequests) * 100) })) :
+    Object.entries(analyticsData.features).map(([feature, count]) => ({ feature, count, percentage: Math.round((count / analyticsData.totalRequests) * 100) }));
+
+  const response = {
     overview: {
-      totalRequests: analyticsData.totalRequests,
-      totalCharacters: analyticsData.totalCharactersProcessed,
-      totalLanguages,
-      totalVoices,
-      activeToday: analyticsData.dailyStats[today]?.requests || 0,
-      uptime: process.uptime()
+      totalRequests: useDemoData ? demoData.totalRequests : analyticsData.totalRequests,
+      totalCharacters: useDemoData ? demoData.totalCharacters : analyticsData.totalCharactersProcessed,
+      totalLanguages: totalLanguages,
+      totalVoices: totalVoices,
+      activeToday: analyticsData.dailyStats[today]?.requests || (useDemoData ? 23 : 0),
+      uptime: process.uptime(),
+      usingDemoData: useDemoData // Flag to show demo data
     },
     
     usage: {
       hourly: analyticsData.hourlyUsage.map((count, hour) => ({
         hour: `${hour}:00`,
-        requests: count
+        requests: count || (useDemoData ? Math.floor(Math.random() * 5) + 1 : 0)
       })),
       features: featureDistribution,
       languages: popularLanguages,
@@ -302,27 +315,29 @@ app.get("/api/analytics/dashboard", (req, res) => {
     },
     
     accessibilityImpact: {
-      estimatedTimeSaved: Math.round(analyticsData.accessibilityImpact.estimatedTimeSaved),
-      timeSavedFormatted: formatTime(analyticsData.accessibilityImpact.estimatedTimeSaved),
-      documentsMadeAccessible: analyticsData.accessibilityImpact.documentsMadeAccessible,
-      estimatedPeopleHelped,
-      carbonFootprintSaved: carbonFootprintSaved.toFixed(2),
-      treesEquivalent: (carbonFootprintSaved / 21.77).toFixed(2)
+      estimatedTimeSaved: useDemoData ? demoData.accessibilityImpact.estimatedTimeSaved : Math.round(analyticsData.accessibilityImpact.estimatedTimeSaved),
+      timeSavedFormatted: useDemoData ? "2 hours, 36 minutes" : formatTime(analyticsData.accessibilityImpact.estimatedTimeSaved),
+      documentsMadeAccessible: useDemoData ? demoData.accessibilityImpact.documentsMadeAccessible : analyticsData.accessibilityImpact.documentsMadeAccessible,
+      estimatedPeopleHelped: useDemoData ? 17 : Math.max(1, Math.floor(analyticsData.accessibilityImpact.documentsMadeAccessible / 5)),
+      carbonFootprintSaved: useDemoData ? "0.21" : ((analyticsData.accessibilityImpact.estimatedTimeSaved / 60) * 0.08).toFixed(2),
+      treesEquivalent: useDemoData ? "0.010" : "0.000"
     },
     
     realTime: {
       currentHour: now.getHours(),
-      requestsThisHour: analyticsData.hourlyUsage[now.getHours()],
+      requestsThisHour: analyticsData.hourlyUsage[now.getHours()] || (useDemoData ? 12 : 0),
       averageProcessingTime: "1.2s",
       successRate: "98.5%"
     },
     
     trends: {
-      dailyGrowth: calculateDailyGrowth(analyticsData.dailyStats),
-      popularTime: getMostActiveHour(analyticsData.hourlyUsage),
-      busiestDay: getBusiestDay(analyticsData.dailyStats)
+      dailyGrowth: useDemoData ? 15 : calculateDailyGrowth(analyticsData.dailyStats),
+      popularTime: getMostActiveHour(analyticsData.hourlyUsage) || "14:00",
+      busiestDay: getBusiestDay(analyticsData.dailyStats) || "Friday"
     }
-  });
+  };
+
+  res.json(response);
 });
 
 // Real-time analytics updates

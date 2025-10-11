@@ -431,3 +431,29 @@
     flex: 0 0 calc(25% - 10px);
   }
 }
+.demo-banner {
+  background: linear-gradient(135deg, #FF9800, #F57C00);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 25px;
+  font-weight: bold;
+  margin: 10px 0;
+  animation: pulse 2s infinite;
+}
+
+.analytics-error {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+}
+
+.error-icon {
+  font-size: 48px;
+  margin-bottom: 20px;
+}
+
+.demo-notice {
+  font-style: italic;
+  margin-top: 10px;
+  color: #FF9800;
+}
