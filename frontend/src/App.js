@@ -9,11 +9,12 @@ import VoiceGallery from './components/VoiceGallery';
 import AccessibilityPanel from './components/AccessibilityPanel';
 import LanguageSelector from './components/LanguageSelector';
 import AccessibilityControls from './components/AccessibilityControls';
+import AnalyticsDashboard from './components/AnalyticsDashboard';
 
 function App() {
   const [currentView, setCurrentView] = useState('text');
   const [language, setLanguage] = useState('en');
-  const [voice, setVoice] = useState('en-UK-hazel');
+  const [voice, setVoice] = useState('en_us_nova');
   const [speed, setSpeed] = useState(1.0);
   const [availableVoices, setAvailableVoices] = useState([]);
   const [highContrast, setHighContrast] = useState(false);
@@ -30,10 +31,9 @@ function App() {
         }
       } catch (error) {
         console.error('Error loading voices:', error);
-        // Fallback voices
         setAvailableVoices([
-          { id: 'en-UK-hazel', name: 'Hazel', gender: 'female' },
-          { id: 'en-US-ryan', name: 'Ryan', gender: 'male' }
+          { id: 'en_us_nova', name: 'Nova', gender: 'female' },
+          { id: 'en_us_ryan', name: 'Ryan', gender: 'male' }
         ]);
       }
     };
@@ -62,6 +62,7 @@ function App() {
   const views = [
     { id: 'text', name: '📖 Text Reader', description: 'Read any text aloud' },
     { id: 'realtime', name: '⚡ Real-Time', description: 'Instant voice responses' },
+    { id: 'analytics', name: '📊 Analytics', description: 'View impact dashboard' },
     { id: 'voices', name: '🌍 Voice Gallery', description: 'Explore Indian languages' },
     { id: 'document', name: '📄 Documents', description: 'Convert documents to audio' },
     { id: 'accessibility', name: '♿ Settings', description: 'Accessibility options' },
@@ -71,7 +72,7 @@ function App() {
   const handleVoiceSelect = (voiceId, languageCode) => {
     setVoice(voiceId);
     setLanguage(languageCode);
-    setCurrentView('text'); // Switch to text reader to use the new voice
+    setCurrentView('text');
   };
 
   return (
@@ -82,7 +83,7 @@ function App() {
           <h1>🎧 VoiceAssist</h1>
           <p>Making Digital Content Accessible for Everyone</p>
           <div className="accessibility-badge">
-            ♿ WCAG Compliant • 🌍 10 Indian Languages • ⚡ WebSocket • 🎵 High Quality Voices
+            ♿ WCAG Compliant • 🌍 10 Indian Languages • ⚡ WebSocket • 📊 Analytics Dashboard
           </div>
         </div>
         
@@ -142,6 +143,10 @@ function App() {
             voice={voice}
             speed={speed}
           />
+        )}
+        
+        {currentView === 'analytics' && (
+          <AnalyticsDashboard />
         )}
         
         {currentView === 'voices' && (
@@ -218,9 +223,9 @@ function App() {
                 </div>
                 
                 <div className="feature-card">
-                  <div className="feature-icon">🎵</div>
-                  <h3>High Quality Voices</h3>
-                  <p>Natural-sounding voices from Murf AI with adjustable speed and tone preferences.</p>
+                  <div className="feature-icon">📊</div>
+                  <h3>Impact Analytics</h3>
+                  <p>Track real-time usage and social impact with comprehensive analytics dashboard.</p>
                 </div>
               </div>
 
@@ -236,8 +241,8 @@ function App() {
                     <div className="stat-label">WCAG Compliant</div>
                   </div>
                   <div className="stat">
-                    <div className="stat-number">⚡</div>
-                    <div className="stat-label">Real-time</div>
+                    <div className="stat-number">📊</div>
+                    <div className="stat-label">Analytics</div>
                   </div>
                   <div className="stat">
                     <div className="stat-number">∞</div>
@@ -288,11 +293,17 @@ function App() {
             </button>
             <button 
               className="footer-link"
+              onClick={() => setCurrentView('analytics')}
+            >
+              Analytics
+            </button>
+            <button 
+              className="footer-link"
               onClick={() => setCurrentView('about')}
             >
               About
             </button>
-            <span className="version">v1.0.0</span>
+            <span className="version">v2.0.0</span>
           </div>
         </div>
       </footer>
