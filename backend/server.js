@@ -7,11 +7,15 @@ import WebSocket, { WebSocketServer } from 'ws';
 dotenv.config();
 
 const app = express();
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://voice-lens.vercel.app/';
 
 
 app.use(cors({
-  origin: [FRONTEND_URL, 'http://localhost:3000'],
+  origin: [
+    'https://voice-lens.vercel.app',
+    'http://localhost:3000',
+    'https://voicelens.onrender.com'
+  ],
   credentials: true
 }));
 app.use(express.json({ limit: '50mb' }));
