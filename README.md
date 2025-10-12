@@ -329,8 +329,6 @@ Integration marketplace
 <div align="center">
 Made with ❤️ for a more accessible world
 
-https://api.star-history.com/svg?repos=your-username/voicelens&type=Date
-
 </div>
 VoiceLens - Transforming digital accessibility through AI-powered speech technology
 
