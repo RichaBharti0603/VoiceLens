@@ -1,226 +1,119 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 
 const TextReader = ({ language, voice, speed }) => {
   const [text, setText] = useState('');
+  const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [audioUrl, setAudioUrl] = useState('');
-  const [error, setError] = useState('');
-  const audioRef = useRef(null);
 
-  // ✅ FIXED: Use production API URL
-  const API_BASE_URL = 'https://voicelens.onrender.com';
-
-  const handleTextToSpeech = async () => {
-    if (!text.trim()) {
-      setError('Please enter some text');
-      return;
-    }
+  const handleReadAloud = async () => {
+    if (!text.trim()) return;
 
     setIsLoading(true);
-    setError('');
-    setAudioUrl(''); // Clear previous audio
-
     try {
-      console.log("🔄 Sending TTS request to:", `${API_BASE_URL}/api/tts`);
-      const response = await fetch(`${API_BASE_URL}/api/tts`, {
+      // First, process the text for better TTS
+      const processResponse = await fetch('http://localhost:5000/api/process-text', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, language })
+      });
+      
+      const processed = await processResponse.json();
+      
+      // Then convert to speech
+      const ttsResponse = await fetch('http://localhost:5000/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          text: text.trim(), 
+          text: processed.processedText, 
           voice, 
-          language, 
+          language,
           speed 
         })
       });
 
-      console.log("📡 Response status:", response.status);
+      const audioBlob = await ttsResponse.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
       
-      if (!response.ok) {
-        let errorMessage = `HTTP error! status: ${response.status}`;
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.error || errorData.details || errorMessage;
-        } catch (e) {
-          // If response is not JSON, use status text
-          errorMessage = response.statusText || errorMessage;
-        }
-        throw new Error(errorMessage);
-      }
+      audio.onplay = () => setIsPlaying(true);
+      audio.onended = () => {
+        setIsPlaying(false);
+        URL.revokeObjectURL(audioUrl);
+      };
+      audio.onerror = () => {
+        setIsPlaying(false);
+        setIsLoading(false);
+      };
 
-      // Check if response is audio
-      const contentType = response.headers.get('content-type');
-      console.log("📦 Content-Type:", contentType);
+      await audio.play();
       
-      if (contentType && contentType.includes('audio/')) {
-        const audioBlob = await response.blob();
-        console.log("🎵 Audio blob size:", audioBlob.size, "type:", audioBlob.type);
-        
-        if (audioBlob.size === 0) {
-          throw new Error('Empty audio response received from server');
-        }
-        
-        // Create object URL for the blob
-        const url = URL.createObjectURL(audioBlob);
-        console.log("🔗 Created audio URL:", url);
-        setAudioUrl(url);
-        
-        // Play audio automatically
-        if (audioRef.current) {
-          audioRef.current.src = url;
-          audioRef.current.load(); // Ensure audio element loads the new source
-          audioRef.current.play().catch(playError => {
-            console.error('Audio play error:', playError);
-            setError('Audio playback failed: ' + playError.message);
-          });
-        }
-      } else {
-        // Handle non-audio response
-        const responseText = await response.text();
-        console.error("❌ Non-audio response:", responseText);
-        throw new Error('Server returned non-audio response. Please check backend configuration.');
-      }
-
-    } catch (err) {
-      console.error('❌ TTS Error:', err);
-      setError(err.message || 'Failed to convert text to speech. Please try again.');
-      
-      // Clear any invalid audio URL
-      setAudioUrl('');
+    } catch (error) {
+      console.error('Error playing audio:', error);
+      alert('Error converting text to speech. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleClear = () => {
-    setText('');
-    setAudioUrl('');
-    setError('');
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = '';
-    }
+  const sampleTexts = {
+    en: "Welcome to VoiceAssist! This platform helps make digital content accessible to everyone through high-quality text-to-speech technology.",
+    hi: "वॉयसअसिस्ट में आपका स्वागत है! यह प्लेटफॉर्म उच्च-गुणवत्ता वाली टेक्स्ट-टू-स्पीच तकनीक के माध्यम से डिजिटल सामग्री को सभी के लिए सुलभ बनाने में मदद करता है।",
+    mr: "वॉइसअसिस्टमध्ये आपले स्वागत आहे! हे प्लॅटफॉर्म उच्च-गुणवत्तेच्या मजकूर-ते-भाषण तंत्रज्ञानाद्वारे डिजिटल सामग्री प्रत्येकासाठी सुलभ करण्यास मदत करते.",
+    te: "వాయిస్ అసిస్ట్‌కు స్వాగతం! ఈ ప్లాట్‌ఫార్మ్ హై-క్వాలిటీ టెక్స్ట్-టు-స్పీచ్ టెక్నాలజీ ద్వారా డిజిటల్ కంటెంట్‌ను అందరికీ అందుబాటులోకి తెస్తుంది."
   };
-
-  // Sample texts for quick testing
-  const sampleTexts = [
-    "Hello! Welcome to VoiceAssist. This is a test of the text to speech system.",
-    "नमस्ते! यह हिंदी भाषा का परीक्षण है।",
-    "Welcome to our accessibility platform that helps everyone access digital content."
-  ];
 
   return (
     <div className="text-reader">
       <h2>📖 Text Reader</h2>
+      <p>Paste or type any text to have it read aloud in your preferred language.</p>
       
-      {/* Quick Sample Buttons */}
-      <div className="sample-buttons">
-        <p>Try these samples:</p>
-        {sampleTexts.map((sample, index) => (
-          <button
-            key={index}
-            className="sample-btn"
-            onClick={() => setText(sample)}
-          >
-            Sample {index + 1}
-          </button>
-        ))}
-      </div>
-      
-      <div className="text-input-section">
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Enter text to convert to speech..."
-          rows="6"
-          aria-label="Text to convert to speech"
-        />
-        
-        {error && (
-          <div className="error-message">
-            ⚠️ {error}
-          </div>
-        )}
-        
-        <div className="text-controls">
-          <button 
-            onClick={handleTextToSpeech}
-            disabled={isLoading || !text.trim()}
-            className="primary-btn"
-          >
-            {isLoading ? '🔄 Converting...' : '🎵 Convert to Speech'}
-          </button>
-          
-          <button 
-            onClick={handleClear}
-            disabled={!text && !audioUrl}
-            className="secondary-btn"
-          >
-            🗑️ Clear
-          </button>
-        </div>
-      </div>
-
-      {audioUrl && (
-        <div className="audio-player-section">
-          <h3>🎧 Audio Output</h3>
-          <audio 
-            ref={audioRef}
-            controls 
-            onError={(e) => {
-              console.error('Audio element error:', e);
-              setError('Failed to load audio. The audio format may not be supported.');
-            }}
-            onLoadStart={() => console.log('Audio loading started')}
-            onCanPlay={() => console.log('Audio can play')}
-            onCanPlayThrough={() => console.log('Audio can play through')}
-            className="audio-player"
-          >
-            Your browser does not support the audio element.
-            <source src={audioUrl} type="audio/mpeg" />
-            <source src={audioUrl} type="audio/mp3" />
-          </audio>
-          <div className="audio-actions">
-            <a 
-              href={audioUrl} 
-              download="voiceassist-audio.mp3"
-              className="download-btn"
+      <div className="sample-texts">
+        <h4>Try sample text:</h4>
+        <div className="sample-buttons">
+          {Object.entries(sampleTexts).map(([lang, sample]) => (
+            <button
+              key={lang}
+              className="sample-btn"
+              onClick={() => setText(sample)}
             >
-              💾 Download Audio
-            </a>
-            <button 
-              onClick={() => {
-                if (audioRef.current) {
-                  audioRef.current.pause();
-                  audioRef.current.currentTime = 0;
-                }
-              }}
-              className="secondary-btn"
-            >
-              ⏹️ Stop
+              {lang.toUpperCase()}
             </button>
-          </div>
+          ))}
         </div>
-      )}
+      </div>
 
-      {/* Current Settings Display */}
-      <div className="current-settings">
-        <h4>Current Settings:</h4>
-        <div className="settings-grid">
-          <div className="setting-item">
-            <strong>API Endpoint:</strong> {API_BASE_URL}
-          </div>
-          <div className="setting-item">
-            <strong>Voice:</strong> {voice}
-          </div>
-          <div className="setting-item">
-            <strong>Language:</strong> {language}
-          </div>
-          <div className="setting-item">
-            <strong>Speed:</strong> {speed}x
-          </div>
-        </div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Enter text here to convert to speech..."
+        rows="10"
+        className="text-input"
+        aria-label="Text to convert to speech"
+      />
+
+      <div className="text-stats">
+        <span>Characters: {text.length}</span>
+        <span>Words: {text.trim() ? text.trim().split(/\s+/).length : 0}</span>
+      </div>
+
+      <button
+        onClick={handleReadAloud}
+        disabled={!text.trim() || isLoading || isPlaying}
+        className="read-aloud-btn"
+      >
+        {isLoading ? '🔄 Processing...' : 
+         isPlaying ? '🔊 Playing...' : 
+         '🎵 Read Aloud'}
+      </button>
+
+      <div className="accessibility-tips">
+        <h4>♿ Accessibility Tips:</h4>
+        <ul>
+          <li>Use clear, simple language for better speech synthesis</li>
+          <li>Break long texts into smaller paragraphs</li>
+          <li>Use proper punctuation for natural pauses</li>
+          <li>Adjust speed according to your preference</li>
+        </ul>
       </div>
     </div>
   );
