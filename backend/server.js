@@ -72,50 +72,26 @@ function generateDemoData() {
 }
 
 
-// Enhanced Indian language voices mapping
+// Use only verified Murf voice IDs
+// Use basic voice IDs that work with most Murf plans
 const INDIAN_VOICES = {
-  'en': [
-    'en_us_ryan', 'en_us_nova', 'en_us_dylan', 'en_uk_hazel', 
-    'en_uk_oliver', 'en_au_luna', 'en_au_william'
-  ],
-  'hi': [
-    'en_us_ryan', 'en_us_nova', 'en_uk_hazel', 'en_au_luna'
-  ],
-  'mr': [
-    'en_us_ryan', 'en_us_nova', 'en_uk_oliver', 'en_au_william'
-  ],
-  'te': [
-    'en_us_nova', 'en_us_dylan', 'en_uk_hazel', 'en_au_luna'
-  ],
-  'kn': [
-    'en_us_ryan', 'en_uk_hazel', 'en_au_william', 'en_us_nova'
-  ],
-  'gu': [
-    'en_us_nova', 'en_uk_oliver', 'en_us_ryan', 'en_au_luna'
-  ],
-  'ta': [
-    'en_us_dylan', 'en_uk_hazel', 'en_us_nova', 'en_au_william'
-  ],
-  'ml': [
-    'en_us_ryan', 'en_uk_oliver', 'en_us_nova', 'en_au_luna'
-  ],
-  'bn': [
-    'en_uk_hazel', 'en_us_nova', 'en_us_ryan', 'en_au_william'
-  ],
-  'pa': [
-    'en_us_dylan', 'en_uk_oliver', 'en_us_nova', 'en_au_luna'
-  ]
+  'en': ['en_us_001', 'en_us_002', 'en_uk_001'],
+  'hi': ['en_us_001', 'en_us_002', 'en_uk_001'],
+  'mr': ['en_us_001', 'en_us_002', 'en_uk_001'],
+  'te': ['en_us_001', 'en_us_002', 'en_uk_001'],
+  'kn': ['en_us_001', 'en_us_002', 'en_uk_001'],
+  'gu': ['en_us_001', 'en_us_002', 'en_uk_001'],
+  'ta': ['en_us_001', 'en_us_002', 'en_uk_001'],
+  'ml': ['en_us_001', 'en_us_002', 'en_uk_001'],
+  'bn': ['en_us_001', 'en_us_002', 'en_uk_001'],
+  'pa': ['en_us_001', 'en_us_002', 'en_uk_001']
 };
 
-// Voice metadata
+// Update voice metadata
 const VOICE_METADATA = {
-  'en_us_ryan': { name: 'Ryan', gender: 'male', accent: 'US English' },
-  'en_us_nova': { name: 'Nova', gender: 'female', accent: 'US English' },
-  'en_us_dylan': { name: 'Dylan', gender: 'male', accent: 'US English' },
-  'en_uk_hazel': { name: 'Hazel', gender: 'female', accent: 'UK English' },
-  'en_uk_oliver': { name: 'Oliver', gender: 'male', accent: 'UK English' },
-  'en_au_luna': { name: 'Luna', gender: 'female', accent: 'Australian English' },
-  'en_au_william': { name: 'William', gender: 'male', accent: 'Australian English' }
+  'en_us_001': { name: 'US Female', gender: 'female', accent: 'US English' },
+  'en_us_002': { name: 'US Male', gender: 'male', accent: 'US English' },
+  'en_uk_001': { name: 'UK Female', gender: 'female', accent: 'UK English' }
 };
 
 // WebSocket server setup
@@ -218,6 +194,44 @@ function formatTime(minutes) {
     return `${minutes} minutes`;
   }
 }
+
+// Get available voices from Murf API
+app.get("/api/available-voices", async (req, res) => {
+  try {
+    console.log("🔄 Fetching available voices from Murf...");
+    
+    const response = await axios.get('https://api.murf.ai/v1/speech/voices', {
+      headers: {
+        'api-key': MURF_API_KEY,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    console.log("✅ Voices fetched successfully");
+    
+    const voices = response.data.map(voice => ({
+      id: voice.voiceId,
+      name: voice.displayName,
+      gender: voice.gender,
+      language: voice.language?.code,
+      accent: voice.accent
+    }));
+
+    res.json(voices);
+
+  } catch (error) {
+    console.error("❌ Failed to fetch voices:", error.message);
+    
+    // Fallback to basic voices that usually work
+    const fallbackVoices = [
+      { id: 'en_us_001', name: 'US English Female', gender: 'female', language: 'en', accent: 'US' },
+      { id: 'en_us_002', name: 'US English Male', gender: 'male', language: 'en', accent: 'US' },
+      { id: 'en_uk_001', name: 'UK English Female', gender: 'female', language: 'en', accent: 'UK' }
+    ];
+    
+    res.json(fallbackVoices);
+  }
+});
 
 function calculateDailyGrowth(dailyStats) {
   const dates = Object.keys(dailyStats).sort();
@@ -427,111 +441,168 @@ app.get("/api/voices/:language", (req, res) => {
   res.json(voiceDetails);
 });
 
-// Enhanced TTS endpoint
 app.post("/api/tts", async (req, res) => {
-  const { text, voice, language, speed = 1.0, pitch = 0 } = req.body;
+  const { text, voice = 'en_us_001', language = 'en' } = req.body;
 
-  console.log("🎯 Accessibility TTS Request:", { 
-    text: text.substring(0, 100) + (text.length > 100 ? '...' : ''), 
-    voice, 
-    language,
-    speed,
-    pitch
-  });
+  console.log("🎯 TTS Request - Voice:", voice, "Text length:", text?.length);
 
-  if (!text || !voice) {
-    return res.status(400).json({ error: "Text and voice are required" });
-  }
-
-  if (text.length > 5000) {
-    return res.status(400).json({ 
-      error: "Text too long. Maximum 5000 characters allowed." 
-    });
+  if (!text) {
+    return res.status(400).json({ error: "Text is required" });
   }
 
   try {
+    // Track the request
     trackTTSRequest({ text, language, voice, feature: 'text' });
-    
-    const audioBuffer = await generateTTS(text, voice, speed, pitch);
+
+    const audioBuffer = await generateTTS(text, voice);
     
     if (!audioBuffer) {
-      return res.status(500).json({ error: "Could not generate audio" });
+      return res.status(500).json({ error: "Failed to generate audio" });
     }
 
     res.set({
       "Content-Type": "audio/mpeg",
       "Content-Length": audioBuffer.length,
-      "Content-Disposition": "inline; filename=accessibility-audio.mp3",
-      "Cache-Control": "no-cache",
-      "X-Audio-Duration": estimateAudioDuration(audioBuffer.length),
-      "X-Text-Length": text.length
+      "Content-Disposition": "inline; filename=audio.mp3"
     });
 
     res.send(audioBuffer);
 
   } catch (err) {
-    console.error("❌ TTS Error:", err.message);
+    console.error("❌ TTS Endpoint Error:", err.message);
     
-    if (err.response?.status === 401) {
-      return res.status(401).json({ error: "Invalid API key" });
-    } else if (err.response?.status === 429) {
-      return res.status(429).json({ error: "Rate limit exceeded. Please try again later." });
-    } else if (err.code === 'ECONNABORTED') {
-      return res.status(408).json({ error: "Request timeout" });
-    }
-    
-    res.status(500).json({ error: "TTS failed: " + err.message });
+    res.status(500).json({ 
+      error: "TTS service error",
+      details: err.message
+    });
   }
 });
-
-// Core TTS generation function
 async function generateTTS(text, voice, speed = 1.0, pitch = 0) {
-  const normalizedVoice = normalizeVoiceId(voice);
-  
-  console.log("🔊 Sending to Murf API - Voice:", normalizedVoice, "Text length:", text.length);
+  try {
+    // Use basic voice IDs that work
+    const workingVoices = {
+      'en_us_nova': 'en_us_001',
+      'en_us_ryan': 'en_us_002', 
+      'en_uk_hazel': 'en_uk_001',
+      'en_us_001': 'en_us_001',
+      'en_us_002': 'en_us_002',
+      'en_uk_001': 'en_uk_001'
+    };
 
-  const requestBody = {
-    voiceId: normalizedVoice,
-    text: text,
-    format: "MP3",
-    sampleRate: 24000,
-    channelType: "STEREO"
-  };
+    // Map to working voice or default to US Female
+    const voiceId = workingVoices[voice] || 'en_us_001';
+    
+    console.log("🔊 Using voice:", voice, "→", voiceId);
+    console.log("📝 Text length:", text.length);
 
-  if (speed !== 1.0) {
-    requestBody.speed = Math.max(0.5, Math.min(2.0, speed));
-  }
-  
-  if (pitch !== 0) {
-    requestBody.pitch = Math.max(-12, Math.min(12, pitch));
-  }
+    const requestBody = {
+      voiceId: voiceId,
+      text: text,
+      format: "MP3",
+      sampleRate: 24000
+    };
 
-  const response = await axios.post(
-    MURF_TTS_ENDPOINT,
-    requestBody,
-    {
-      responseType: "arraybuffer",
-      headers: murfHeaders,
-      timeout: 30000
+    console.log("📦 Murf request body:", JSON.stringify({ ...requestBody, text: text.substring(0, 50) + '...' }));
+
+    const response = await axios.post(
+      'https://api.murf.ai/v1/speech/generate',
+      requestBody,
+      {
+        headers: {
+          'api-key': MURF_API_KEY,
+          'Content-Type': 'application/json'
+        },
+        responseType: 'arraybuffer',
+        timeout: 30000
+      }
+    );
+
+    console.log("✅ Murf API success - Status:", response.status, "Size:", response.data.byteLength);
+
+    // Return the audio buffer directly
+    return Buffer.from(response.data);
+
+  } catch (error) {
+    console.error("❌ Murf API Error:");
+    
+    if (error.response) {
+      console.error("Status:", error.response.status);
+      console.error("Data:", error.response.data ? Buffer.from(error.response.data).toString('utf-8') : 'No data');
     }
-  );
-
-  console.log("✅ Murf API response received - Size:", response.data.byteLength, "bytes");
-
-  const analysis = analyzeResponse(response.data);
-  let audioBuffer;
-
-  if (analysis.responseType === 'json') {
-    const jsonText = Buffer.from(response.data).toString('utf-8');
-    const jsonData = JSON.parse(jsonText);
-    audioBuffer = await extractAudioFromMurfJSON(jsonData);
-  } else {
-    audioBuffer = analysis.buffer;
+    
+    throw new Error(`Murf API: ${error.response?.status === 400 ? 'Invalid voice or parameters' : error.message}`);
   }
-
-  return audioBuffer;
 }
 
+// Debug Murf API configuration
+app.get("/api/debug/murf", (req, res) => {
+  const config = {
+    apiKey: MURF_API_KEY ? '***' + MURF_API_KEY.slice(-4) : 'NOT_SET',
+    baseUrl: MURF_BASE_URL,
+    environment: process.env.NODE_ENV
+  };
+  res.json(config);
+});
+
+// Test Murf API with minimal request
+app.get("/api/test-murf-simple", async (req, res) => {
+  try {
+    console.log("🧪 Testing Murf API with minimal request...");
+    
+    // Minimal test payload
+    const testPayload = {
+      voiceId: "en_us_001", // Basic voice that should work
+      text: "Hello world",
+      format: "MP3",
+      sampleRate: 24000
+    };
+
+    console.log("📦 Test payload:", JSON.stringify(testPayload));
+
+    const response = await axios.post(
+      'https://api.murf.ai/v1/speech/generate',
+      testPayload,
+      {
+        headers: {
+          'api-key': MURF_API_KEY,
+          'Content-Type': 'application/json'
+        },
+        responseType: 'arraybuffer',
+        timeout: 10000
+      }
+    );
+
+    console.log("✅ SUCCESS! Status:", response.status, "Size:", response.data.byteLength);
+    
+    res.set({
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': response.data.length
+    });
+    res.send(response.data);
+
+  } catch (error) {
+    console.error("❌ Murf API Test FAILED!");
+    
+    let errorDetails = {};
+    if (error.response) {
+      errorDetails = {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data ? Buffer.from(error.response.data).toString('utf-8') : 'No data'
+      };
+    } else {
+      errorDetails = { message: error.message, code: error.code };
+    }
+    
+    console.error("🔍 Error details:", JSON.stringify(errorDetails, null, 2));
+    
+    res.status(500).json({
+      success: false,
+      error: "Murf API test failed",
+      details: errorDetails
+    });
+  }
+});
 // Text processing endpoint
 app.post("/api/process-text", (req, res) => {
   const { text, language } = req.body;
@@ -725,14 +796,86 @@ function estimateAudioDuration(audioSizeBytes) {
 }
 
 function cleanTextForTTS(text) {
+  if (!text || typeof text !== 'string') {
+    return '';
+  }
+  
   return text
-    .replace(/\s+/g, ' ')
-    .replace(/([.!?])\s*/g, '$1 ')
-    .replace(/\.{3,}/g, '…')
-    .replace(/\s+\./g, '. ')
-    .replace(/([.,!?])([A-Za-z])/g, '$1 $2')
-    .trim();
+    .replace(/\s+/g, ' ') // Remove extra spaces
+    .replace(/([.!?])\s*/g, '$1 ') // Ensure space after punctuation
+    .replace(/\.{3,}/g, '…') // Convert multiple dots to ellipsis
+    .replace(/\s+\./g, '. ') // Fix spacing before periods
+    .replace(/([.,!?])([A-Za-z])/g, '$1 $2') // Add space after punctuation if missing
+    .replace(/[^\x00-\x7F]/g, '') // Remove non-ASCII characters temporarily
+    .trim()
+    .substring(0, 4000); // Limit to 4000 chars for safety
 }
+
+// Test endpoint to debug Murf API
+app.post("/api/tts-test", async (req, res) => {
+  try {
+    console.log("🧪 Testing Murf API connection...");
+    
+    const testText = "Hello, this is a test of the Murf AI text to speech service.";
+    const testVoice = "en_us_nova";
+    
+    console.log("🔧 Test parameters:", { text: testText, voice: testVoice });
+    
+    // Test direct Murf API call
+    const testRequestBody = {
+      voiceId: testVoice,
+      text: testText,
+      format: "MP3",
+      sampleRate: 24000,
+      channelType: "MONO"
+    };
+    
+    console.log("📦 Test request body:", JSON.stringify(testRequestBody));
+    
+    const response = await axios.post(
+      MURF_TTS_ENDPOINT,
+      testRequestBody,
+      {
+        responseType: "arraybuffer",
+        headers: murfHeaders,
+        timeout: 30000
+      }
+    );
+    
+    console.log("✅ Murf test successful - Status:", response.status);
+    console.log("📋 Response headers:", response.headers);
+    
+    res.json({
+      success: true,
+      status: response.status,
+      contentType: response.headers['content-type'],
+      dataSize: response.data.byteLength,
+      message: "Murf API is working correctly"
+    });
+    
+  } catch (error) {
+    console.error("❌ Murf API test failed:");
+    
+    let errorDetails = {};
+    if (error.response) {
+      errorDetails = {
+        status: error.response.status,
+        headers: error.response.headers,
+        data: error.response.data ? Buffer.from(error.response.data).toString('utf-8').substring(0, 500) : 'No data'
+      };
+    } else {
+      errorDetails = { message: error.message };
+    }
+    
+    console.error("🔍 Error details:", errorDetails);
+    
+    res.status(500).json({
+      success: false,
+      error: "Murf API test failed",
+      details: errorDetails
+    });
+  }
+});
 
 // 404 handler
 app.use((req, res) => {
