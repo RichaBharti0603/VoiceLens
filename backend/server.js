@@ -513,8 +513,6 @@ app.get("/api/debug/voices", (req, res) => {
   });
 });
 
-
-
 // Voice mapping - map frontend voices to working Murf voices
 const VOICE_MAPPING = {
   // Frontend voice IDs → Working Murf voice IDs
