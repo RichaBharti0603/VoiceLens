@@ -45,7 +45,7 @@ const VOICE_MAPPING = {
   'en_au_william': 'en-AU-william'
 };
 
-const DEFAULT_MURF_VOICE = 'en-UK-hazel';  // This definitely works
+const DEFAULT_MURF_VOICE = 'en-UK-hazel';
 const INDIAN_VOICES = {
   'en': ['en_us_nova', 'en_us_ryan', 'en_uk_hazel'],
   'hi': ['en_us_nova', 'en_us_ryan', 'en_uk_hazel'],
