@@ -14,7 +14,8 @@ import AnalyticsDashboard from './components/AnalyticsDashboard';
 function App() {
   const [currentView, setCurrentView] = useState('text');
   const [language, setLanguage] = useState('en');
-  const [voice, setVoice] = useState('en_us_nova');
+  // Use the frontend voice IDs that will be mapped
+  const [voice, setVoice] = useState('en_us_nova'); // This will map to en_us_001
   const [speed, setSpeed] = useState(1.0);
   const [availableVoices, setAvailableVoices] = useState([]);
   const [highContrast, setHighContrast] = useState(false);
